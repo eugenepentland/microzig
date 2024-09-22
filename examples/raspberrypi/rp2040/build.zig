@@ -3,7 +3,7 @@ const MicroZig = @import("microzig/build");
 const rp2040 = @import("microzig/bsp/raspberrypi/rp2040");
 
 const available_examples = [_]Example{
-    .{ .target = rp2040.boards.raspberrypi.pico, .name = "test", .file = "src/blinky.zig" },
+    .{ .target = rp2040.boards.raspberrypi.pico, .name = "test", .file = "src/feeder/blinky.zig" },
 };
 
 pub fn build(b: *std.Build) void {

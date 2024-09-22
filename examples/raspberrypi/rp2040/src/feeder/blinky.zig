@@ -1,17 +1,24 @@
 const std = @import("std");
 const microzig = @import("microzig");
+const usb_config = @import("usb_config.zig");
 const rp2040 = microzig.hal;
 const time = rp2040.time;
 const gpio = rp2040.gpio;
 const Pwm = microzig.hal.pwm.Pwm;
+pub const baud_rate = 115200;
+const uart = rp2040.uart.instance.num(0);
+pub const uart_tx_pin = gpio.num(0);
+pub const uart_rx_pin = gpio.num(1);
 
 const Feeder = struct {
     led: Pwm(4, .b),
     servo: Pwm(3, .a),
-    speed: u16 = 100,
-    servo_angle: u16 = 0,
+    next_move_time: u64,
+    speed: u16 = 10,
+    servo_angle: u16 = 70,
+    buf: [1024]u8 = undefined,
 
-    pub fn init() !Feeder {
+    pub fn init(now: u64) !Feeder {
         // Setup the pins
         const pin_config = rp2040.pins.GlobalConfiguration{
             .GPIO25 = .{ .name = "led", .function = .PWM4_B },
@@ -29,7 +36,7 @@ const Feeder = struct {
         pins.servo.slice().enable();
 
         // Assign to struct
-        const self = Feeder{ .led = pins.led, .servo = pins.servo };
+        const self = Feeder{ .led = pins.led, .servo = pins.servo, .next_move_time = now };
 
         return self;
     }
@@ -38,27 +45,54 @@ const Feeder = struct {
         self.led.set_level(level); // Set the PWM level to toggle behavior
     }
 
-    pub fn rotate_servo(self: *Feeder, angle: u16) !void {
+    pub fn rotate_servo(self: *Feeder, angle: u16, previous_angle: u16, now: u64) !void {
+        if (previous_angle != self.servo_angle or self.next_move_time > now) {
+            return;
+        }
+        // Get the value to rotate the servo and sleep time
         const result = try get_level_and_sleep_time(self.servo_angle, angle, self.speed);
+
+        // Rotate the servo
         self.servo.set_level(result.level);
         self.servo_angle = angle;
+        const text = try std.fmt.bufPrint(&self.buf, "Angle: {}\n", .{self.servo_angle});
+        usb_config.driver_cdc.write(text);
+
+        // Set the time at which it can move again (time is in microseconds)
+        const sleep_time_micro_second: u64 = @intCast(result.sleep_ms);
+        self.next_move_time = now + (sleep_time_micro_second * 1000);
+
         // Also set the LED (Scaling the level to max of 100)
         self.led.set_level(result.level / 68);
-        time.sleep_ms(result.sleep_ms);
     }
 };
 
 pub fn main() !void {
-    var feeder = try Feeder.init();
-    while (true) {
-        try feeder.rotate_servo(80);
+    var now: u64 = 0;
+    var feeder = try Feeder.init(now);
 
+    inline for (&.{ uart_tx_pin, uart_rx_pin }) |pin| {
+        pin.set_function(.uart);
+    }
+
+    uart.apply(.{
+        .baud_rate = baud_rate,
+        .clock_config = rp2040.clock_config,
+    });
+
+    rp2040.uart.init_logger(uart);
+
+    rp2040.usb.Usb.init_clk();
+    rp2040.usb.Usb.init_device(&usb_config.DEVICE_CONFIGURATION) catch unreachable;
+
+    while (true) {
+        rp2040.usb.Usb.task(false) catch unreachable;
+        now = time.get_time_since_boot().to_us();
+        try feeder.rotate_servo(150, 70, now);
         // Do a half step
-        try feeder.rotate_servo(40);
-        time.sleep_ms(500);
+        try feeder.rotate_servo(108, 150, now);
         // Do a full step
-        try feeder.rotate_servo(0);
-        time.sleep_ms(1000);
+        try feeder.rotate_servo(70, 108, now);
     }
 }
 
@@ -74,9 +108,9 @@ fn get_level_and_sleep_time(previous_angle: u16, angle: u16, speed: u16) !struct
     const multiplier: u16 = 25;
 
     if (angle >= previous_angle) {
-        sleep_ms = (angle * 10 - previous_angle * 10) * multiplier / 100;
+        sleep_ms = (angle - previous_angle) * multiplier / 10;
     } else {
-        sleep_ms = (previous_angle * 10 - angle * 10) * multiplier / 100;
+        sleep_ms = (previous_angle - angle) * multiplier / 10;
     }
 
     sleep_ms = (100 * sleep_ms) / speed;
