@@ -1,75 +1,72 @@
 const std = @import("std");
 const microzig = @import("microzig");
-const usb_config = @import("usb_config.zig");
+
 const rp2040 = microzig.hal;
+const flash = rp2040.flash;
 const time = rp2040.time;
 const gpio = rp2040.gpio;
-const Pwm = microzig.hal.pwm.Pwm;
-pub const baud_rate = 115200;
+const clocks = rp2040.clocks;
+const usb = rp2040.usb;
+
+const led = gpio.num(25);
 const uart = rp2040.uart.instance.num(0);
-pub const uart_tx_pin = gpio.num(0);
-pub const uart_rx_pin = gpio.num(1);
+const baud_rate = 115200;
+const uart_tx_pin = gpio.num(0);
+const uart_rx_pin = gpio.num(1);
 
-const Feeder = struct {
-    led: Pwm(4, .b),
-    servo: Pwm(3, .a),
-    next_move_time: u64,
-    speed: u16 = 10,
-    servo_angle: u16 = 70,
-    buf: [1024]u8 = undefined,
+const usb_config_len = usb.templates.config_descriptor_len + usb.templates.cdc_descriptor_len;
+const usb_config_descriptor =
+    usb.templates.config_descriptor(1, 2, 0, usb_config_len, 0xc0, 100) ++
+    usb.templates.cdc_descriptor(0, 4, usb.Endpoint.to_address(1, .In), // Notification Endpoint
+    8, usb.Endpoint.to_address(2, .Out), // Data OUT Endpoint
+    usb.Endpoint.to_address(2, .In), // Data IN Endpoint
+    64);
 
-    pub fn init(now: u64) !Feeder {
-        // Setup the pins
-        const pin_config = rp2040.pins.GlobalConfiguration{
-            .GPIO25 = .{ .name = "led", .function = .PWM4_B },
-            .GPIO22 = .{ .name = "servo", .function = .PWM3_A },
-        };
-        const pins = pin_config.apply();
+var driver_cdc = usb.cdc.CdcClassDriver{};
+var drivers = [_]usb.types.UsbClassDriver{driver_cdc.driver()};
 
-        // Setup the LED with PWM
-        pins.led.slice().set_wrap(100);
-        pins.led.slice().enable();
+// This is our device configuration
+pub var DEVICE_CONFIGURATION: usb.DeviceConfiguration = .{
+    .device_descriptor = &.{
+        .descriptor_type = usb.DescType.Device,
+        .bcd_usb = 0x0200,
+        .device_class = 0xEF,
+        .device_subclass = 2,
+        .device_protocol = 1,
+        .max_packet_size0 = 64,
+        .vendor = 0x2E8A,
+        .product = 0x000a,
+        .bcd_device = 0x0100,
+        .manufacturer_s = 1,
+        .product_s = 2,
+        .serial_s = 0,
+        .num_configurations = 1,
+    },
+    .config_descriptor = &usb_config_descriptor,
+    .lang_descriptor = "\x04\x03\x09\x04", // length || string descriptor (0x03) || Engl (0x0409)
+    .descriptor_strings = &.{
+        &usb.utils.utf8ToUtf16Le("Raspberry Pi"),
+        &usb.utils.utf8ToUtf16Le("Pico Test Device"),
+        &usb.utils.utf8ToUtf16Le("someserial"),
+        &usb.utils.utf8ToUtf16Le("Board CDC"),
+    },
+    .drivers = &drivers,
+};
 
-        // Setup the servo with PWM
-        pins.servo.slice().set_clk_div(250, 0);
-        pins.servo.slice().set_wrap(10000);
-        pins.servo.slice().enable();
+pub fn panic(message: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    std.log.err("panic: {s}", .{message});
+    @breakpoint();
+    while (true) {}
+}
 
-        // Assign to struct
-        const self = Feeder{ .led = pins.led, .servo = pins.servo, .next_move_time = now };
-
-        return self;
-    }
-
-    pub fn set_level(self: *Feeder, level: u16) void {
-        self.led.set_level(level); // Set the PWM level to toggle behavior
-    }
-
-    pub fn rotate_servo(self: *Feeder, angle: u16, previous_angle: u16, now: u64) !void {
-        if (previous_angle != self.servo_angle or self.next_move_time > now) {
-            return;
-        }
-        // Get the value to rotate the servo and sleep time
-        const result = try get_level_and_sleep_time(self.servo_angle, angle, self.speed);
-
-        // Rotate the servo
-        self.servo.set_level(result.level);
-        self.servo_angle = angle;
-        const text = try std.fmt.bufPrint(&self.buf, "Angle: {}\n", .{self.servo_angle});
-        usb_config.driver_cdc.write(text);
-
-        // Set the time at which it can move again (time is in microseconds)
-        const sleep_time_micro_second: u64 = @intCast(result.sleep_ms);
-        self.next_move_time = now + (sleep_time_micro_second * 1000);
-
-        // Also set the LED (Scaling the level to max of 100)
-        self.led.set_level(result.level / 68);
-    }
+pub const microzig_options = .{
+    .log_level = .debug,
+    .logFn = rp2040.uart.logFn,
 };
 
 pub fn main() !void {
-    var now: u64 = 0;
-    var feeder = try Feeder.init(now);
+    led.set_function(.sio);
+    led.set_direction(.out);
 
     inline for (&.{ uart_tx_pin, uart_rx_pin }) |pin| {
         pin.set_function(.uart);
@@ -82,112 +79,44 @@ pub fn main() !void {
 
     rp2040.uart.init_logger(uart);
 
+    // First we initialize the USB clock
     rp2040.usb.Usb.init_clk();
-    rp2040.usb.Usb.init_device(&usb_config.DEVICE_CONFIGURATION) catch unreachable;
+    // Then initialize the USB device using the configuration defined above
+    rp2040.usb.Usb.init_device(&DEVICE_CONFIGURATION) catch unreachable;
+    //var old: u64 = time.get_time_since_boot().to_us();
+    //var new: u64 = 0;
+    var data_buffer: [64]u8 = undefined;
 
+    //var i: u32 = 0;
+    //var buf: [1024]u8 = undefined;
     while (true) {
-        rp2040.usb.Usb.task(false) catch unreachable;
-        now = time.get_time_since_boot().to_us();
-        try feeder.rotate_servo(150, 70, now);
-        // Do a half step
-        try feeder.rotate_servo(108, 150, now);
-        // Do a full step
-        try feeder.rotate_servo(70, 108, now);
-    }
-}
+        // You can now poll for USB events
+        const bytes_recieved = rp2040.usb.Usb.task(
+            false, // debug output over UART [Y/n]
+            &data_buffer,
+        ) catch unreachable;
 
-fn get_level_and_sleep_time(previous_angle: u16, angle: u16, speed: u16) !struct { level: u16, sleep_ms: u16 } {
-    // Validation
-    if (angle > 180 or previous_angle > 180) {
-        return error.InvalidAngle; // Define an error for invalid angles
-    }
+        if (bytes_recieved > 0) {
+            const data = data_buffer[0..bytes_recieved];
+            std.log.info("full data {s}", .{data});
 
-    const level: u16 = (54 * angle) / 10 + 250;
-    var sleep_ms: u16 = 0;
-    // Larger the multiplier, the slower it runs
-    const multiplier: u16 = 25;
+            // Check if the received string is "reboot"
+            if (std.mem.eql(u8, data, "reboot")) {
+                // Call reboot (reset_usb_boot) when "reboot" is received
+                rp2040.rom.reset_usb_boot(0, 0);
+            }
+        }
 
-    if (angle >= previous_angle) {
-        sleep_ms = (angle - previous_angle) * multiplier / 10;
-    } else {
-        sleep_ms = (previous_angle - angle) * multiplier / 10;
-    }
-
-    sleep_ms = (100 * sleep_ms) / speed;
-
-    return .{
-        .level = level,
-        .sleep_ms = sleep_ms,
-    };
-}
-
-test "serialize struct to bytes and print" {
-    const MyStruct = packed struct {
-        a: u8,
-        b: u16,
-    };
-
-    var my_struct = MyStruct{
-        .a = 128,
-        .b = 512,
-    };
-
-    // Cast the struct's pointer to a byte pointer
-    var bytes_ptr: [*]u8 = @ptrCast(&my_struct);
-
-    // Create a byte slice over the struct's memory
-    const bytes = bytes_ptr[0..@sizeOf(MyStruct)];
-
-    // Print the bytes in hexadecimal format
-    std.debug.print("Bytes: {any}", .{bytes_ptr});
-    for (bytes) |byte| {
-        std.debug.print("{x} ", .{byte});
-    }
-}
-
-test "get level and sleep time" {
-    const TestCase = struct {
-        previous_angle: u16,
-        angle: u16,
-        expected_sleep_ms: u16,
-        expected_level: u16,
-        speed: u16,
-    };
-
-    const test_cases = [_]TestCase{
-        TestCase{
-            .previous_angle = 0,
-            .angle = 100,
-            .expected_sleep_ms = 250,
-            .expected_level = 790,
-            .speed = 100,
-        },
-        TestCase{
-            .previous_angle = 100,
-            .angle = 0,
-            .expected_sleep_ms = 250,
-            .expected_level = 250,
-            .speed = 100,
-        },
-        TestCase{
-            .previous_angle = 100,
-            .angle = 0,
-            .expected_sleep_ms = 2500,
-            .expected_level = 250,
-            .speed = 10,
-        },
-        TestCase{
-            .previous_angle = 0,
-            .angle = 80,
-            .expected_sleep_ms = 200,
-            .expected_level = 682,
-            .speed = 100,
-        },
-    };
-
-    for (test_cases) |test_case| {
-        const result = try get_level_and_sleep_time(test_case.previous_angle, test_case.angle, test_case.speed);
-        try std.testing.expectEqual(test_case.expected_sleep_ms, result.sleep_ms);
-        try std.testing.expectEqual(test_case.expected_level, result.level);
+        //new = time.get_time_since_boot().to_us();
+        //if (new - old > 500000) {
+        //    old = new;
+        //    led.toggle();
+        //    i += 1;
+        // uart log
+        //std.log.info("cdc test: {}\r\n", .{i});
+        // usb log (at this moment 63 bytes is max limit per single call)
+        //const text = std.fmt.bufPrint(&buf, "cdc test: {}\r\n", .{i}) catch &.{};
+        //driver_cdc.write(text);
+        //}
     }
 }

@@ -260,8 +260,15 @@ pub const F = struct {
         endpoint_init(Endpoint.EP0_IN_ADDR, 64, types.TransferType.Control);
         endpoint_init(Endpoint.EP0_OUT_ADDR, 64, types.TransferType.Control);
 
-        // Present full-speed device by enabling pullup on DP. This is the point
-        // where the host will notice our presence.
+        // Initialize Notification Endpoint (EP1 IN - Interrupt)
+        //endpoint_init(Endpoint.EP1_IN_ADDR, 16, types.TransferType.Interrupt); // Typically, 16 bytes for notifications
+        endpoint_init(Endpoint.to_address(1, .In), 64, types.TransferType.Interrupt);
+
+        // Initialize Data Endpoints (EP2 IN and EP2 OUT - Bulk)
+        endpoint_init(Endpoint.to_address(2, .In), 64, types.TransferType.Bulk);
+        endpoint_init(Endpoint.to_address(2, .Out), 64, types.TransferType.Bulk);
+
+        // Present full-speed device by enabling pullup on DP
         peripherals.USBCTRL_REGS.SIE_CTRL.modify(.{ .PULLUP_EN = 1 });
     }
 
@@ -433,7 +440,7 @@ pub const F = struct {
         if (ep_num == 0) {
             ep.endpoint_control_index = 0;
         } else {
-            ep.endpoint_control_index = 2*ep_num - ep_dir.as_number();
+            ep.endpoint_control_index = 2 * ep_num - ep_dir.as_number();
             endpoint_alloc(ep, transfer_type);
         }
     }
@@ -624,7 +631,7 @@ pub fn next(self: *usb.EPBIter) ?usb.EPB {
     // corresponds to this address. We could use a smarter
     // method here, but in practice, the number of endpoints is
     // small so a linear scan doesn't kill us.
-    
+
     const endpoint = F.hardware_endpoint_get_by_address(ep_addr);
 
     // Buffer event for unknown EP?!

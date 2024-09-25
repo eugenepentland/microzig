@@ -30,6 +30,15 @@ pub const Code = enum(u32) {
     flash_enter_cmd_xip = rom_table_code('C', 'X'),
 };
 
+pub fn reset_usb_boot(usb_activity_gpio_pin_mask: u32, disable_interface_mask: u32) noreturn {
+    const S = struct {
+        var f: ?*const fn (usb_activity_gpio_pin_mask: u32, disable_interface_mask: u32) noreturn = null;
+    };
+
+    if (S.f == null) S.f = @as(*const fn (usb_activity_gpio_pin_mask: u32, disable_interface_mask: u32) noreturn, @ptrCast(_rom_func_lookup(Code.reset_usb_boot)));
+    S.f.?(usb_activity_gpio_pin_mask, disable_interface_mask);
+}
+
 /// Signatures of all public bootrom functions
 pub const signatures = struct {
     /// Returns the 32 bit pointer into the ROM if found or NULL otherwise

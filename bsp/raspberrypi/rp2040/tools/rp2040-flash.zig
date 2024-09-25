@@ -155,7 +155,7 @@ pub fn main() !u8 {
     var access_denied_counter: u32 = 0;
     var last_err: anyerror = error.Unknown;
     var device_file: std.fs.File = blk: while (std.time.nanoTimestamp() < connect_timeout) {
-        var device = std.fs.cwd().openFile(device_path, .{ .mode = .write_only }) catch |err| {
+        const device = std.fs.cwd().openFile(device_path, .{ .mode = .write_only }) catch |err| {
             last_err = err;
 
             switch (err) {

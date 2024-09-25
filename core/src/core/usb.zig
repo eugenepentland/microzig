@@ -22,7 +22,6 @@ pub const vendor = @import("usb/vendor.zig");
 pub const utils = @import("usb/utils.zig");
 pub const templates = @import("usb/templates.zig");
 
-
 const DescType = types.DescType;
 const Dir = types.Dir;
 const Endpoint = types.Endpoint;
@@ -78,7 +77,7 @@ pub fn Usb(comptime f: anytype) type {
             // descriptors for transmission.
             var tmp: [128]u8 = .{0} ** 128;
             // Keeps track of sent data from tmp buffer
-            var buffer_reader = BufferReader { .buffer = &.{} };
+            var buffer_reader = BufferReader{ .buffer = &.{} };
             // Last setup packet request
             var setup_packet: types.SetupPacket = undefined;
             // Class driver associated with last setup request if any
@@ -87,10 +86,9 @@ pub fn Usb(comptime f: anytype) type {
 
         // Command endpoint utilities
         const CmdEndpoint = struct {
-
             /// Command response utility function that can split long data in multiple packets
             fn send_cmd_response(data: []const u8, expected_max_length: u16) void {
-                S.buffer_reader = BufferReader { .buffer = data[0..@min(data.len, expected_max_length)] };
+                S.buffer_reader = BufferReader{ .buffer = data[0..@min(data.len, expected_max_length)] };
                 const data_chunk = S.buffer_reader.try_peek(64);
 
                 if (data_chunk.len > 0) {
@@ -125,13 +123,7 @@ pub fn Usb(comptime f: anytype) type {
         }
 
         fn device() types.UsbDevice {
-            return .{
-                .fn_ready = device_ready,
-                .fn_control_transfer = device_control_transfer,
-                .fn_control_ack = device_control_ack,
-                .fn_endpoint_open = device_endpoint_open,
-                .fn_endpoint_transfer = device_endpoint_transfer
-            };
+            return .{ .fn_ready = device_ready, .fn_control_transfer = device_control_transfer, .fn_control_ack = device_control_ack, .fn_endpoint_open = device_endpoint_open, .fn_endpoint_transfer = device_endpoint_transfer };
         }
 
         fn device_ready() bool {
@@ -173,14 +165,14 @@ pub fn Usb(comptime f: anytype) type {
         /// initializing the device.
         ///
         /// This function will return an error if the device hasn't been initialized.
-        pub fn task(debug: bool) !void {
+        pub fn task(debug: bool, data_buffer: []u8) !usize {
             if (usb_config == null) return error.UninitializedDevice;
+            var bytes_received: usize = 0;
 
             S.debug_mode = debug;
 
             // Device Specific Request
             const DeviceRequestProcessor = struct {
-
                 fn process_setup_request(setup: *const types.SetupPacket) !void {
                     switch (setup.request_type.type) {
                         .Class => {
@@ -207,7 +199,7 @@ pub fn Usb(comptime f: anytype) type {
                                         if (cfg_num > 0) {
                                             try process_set_config(cfg_num - 1);
                                             // TODO: call mount callback if any
-                                        } else { 
+                                        } else {
                                             // TODO: call umount callback if any
                                         }
                                     }
@@ -220,10 +212,10 @@ pub fn Usb(comptime f: anytype) type {
                                     if (descriptor_type) |dt| {
                                         try process_get_descriptor(setup, dt);
                                     }
-                                }
+                                },
                             }
                         },
-                        else => {}
+                        else => {},
                     }
                 }
 
@@ -232,15 +224,15 @@ pub fn Usb(comptime f: anytype) type {
                         .Device => {
                             if (S.debug_mode) std.log.info("        Device", .{});
 
-                            var bw = BufferWriter { .buffer = &S.tmp };
+                            var bw = BufferWriter{ .buffer = &S.tmp };
                             try bw.write(&usb_config.?.device_descriptor.serialize());
 
                             CmdEndpoint.send_cmd_response(bw.get_written_slice(), setup.length);
                         },
                         .Config => {
                             if (S.debug_mode) std.log.info("        Config", .{});
-                                
-                            var bw = BufferWriter { .buffer = &S.tmp };
+
+                            var bw = BufferWriter{ .buffer = &S.tmp };
                             try bw.write(usb_config.?.config_descriptor);
 
                             CmdEndpoint.send_cmd_response(bw.get_written_slice(), setup.length);
@@ -260,7 +252,7 @@ pub fn Usb(comptime f: anytype) type {
                                     const s = usb_config.?.descriptor_strings[i - 1];
                                     const len = 2 + s.len;
 
-                                    var wb = BufferWriter { .buffer = &S.tmp };
+                                    var wb = BufferWriter{ .buffer = &S.tmp };
                                     try wb.write_int(u8, @intCast(len));
                                     try wb.write_int(u8, 0x03);
                                     try wb.write(s);
@@ -268,7 +260,7 @@ pub fn Usb(comptime f: anytype) type {
                                     break :StringBlk wb.get_written_slice();
                                 }
                             };
-                            
+
                             CmdEndpoint.send_cmd_response(bytes, setup.length);
                         },
                         .Interface => {
@@ -290,12 +282,12 @@ pub fn Usb(comptime f: anytype) type {
                                 .num_configurations = usb_config.?.device_descriptor.num_configurations,
                             };
 
-                            var bw = BufferWriter { .buffer = &S.tmp };
+                            var bw = BufferWriter{ .buffer = &S.tmp };
                             try bw.write(&dqd.serialize());
 
                             CmdEndpoint.send_cmd_response(bw.get_written_slice(), setup.length);
                         },
-                        else => {}
+                        else => {},
                     }
                 }
 
@@ -345,7 +337,9 @@ pub fn Usb(comptime f: anytype) type {
 
                 fn bind_endpoints_to_driver(drv_bos_cfg: []const u8, drv_idx: u8) void {
                     var curr_bos_cfg = drv_bos_cfg;
-                    while (curr_bos_cfg.len > 0) : ({curr_bos_cfg = BosConfig.get_desc_next(curr_bos_cfg);}) {
+                    while (curr_bos_cfg.len > 0) : ({
+                        curr_bos_cfg = BosConfig.get_desc_next(curr_bos_cfg);
+                    }) {
                         if (BosConfig.try_get_desc_as(types.EndpointDescriptor, curr_bos_cfg)) |desc_ep| {
                             const ep_addr = desc_ep.endpoint_address;
                             ep_to_drv[Endpoint.num_from_address(ep_addr)][Endpoint.dir_from_address(ep_addr).as_number()] = drv_idx;
@@ -369,8 +363,7 @@ pub fn Usb(comptime f: anytype) type {
 
             // Endpoint Specific Request
             const EndpointRequestProcessor = struct {
-                fn process_setup_request(_: *const types.SetupPacket) !void {
-                }
+                fn process_setup_request(_: *const types.SetupPacket) !void {}
             };
 
             // Check which interrupt flags are set.
@@ -392,9 +385,8 @@ pub fn Usb(comptime f: anytype) type {
                     .Device => try DeviceRequestProcessor.process_setup_request(&setup),
                     .Interface => try InterfaceRequestProcessor.process_setup_request(&setup),
                     .Endpoint => try EndpointRequestProcessor.process_setup_request(&setup),
-                    else => {}
+                    else => {},
                 }
-
             }
 
             // Events on one or more buffers? (In practice, always one.)
@@ -404,36 +396,29 @@ pub fn Usb(comptime f: anytype) type {
 
                 while (iter.next(&iter)) |epb| {
                     if (debug) std.log.info("    data: {any}", .{epb.buffer});
-
                     // Perform any required action on the data. For OUT, the `data`
                     // will be whatever was sent by the host. For IN, it's a copy of
                     // whatever we sent.
                     switch (epb.endpoint_address) {
                         Endpoint.EP0_IN_ADDR => {
                             if (debug) std.log.info("    EP0_IN_ADDR", .{});
-                            
+
                             const buffer_reader = &S.buffer_reader;
-                            
+
                             // We use this opportunity to finish the delayed
                             // SetAddress request, if there is one:
                             if (S.new_address) |addr| {
                                 // Change our address:
                                 f.set_address(@intCast(addr));
                             }
-                            
+
                             if (epb.buffer.len > 0 and buffer_reader.get_remaining_bytes_count() > 0) {
                                 _ = buffer_reader.try_advance(epb.buffer.len);
                                 const next_data_chunk = buffer_reader.try_peek(64);
                                 if (next_data_chunk.len > 0) {
-                                    f.usb_start_tx(
-                                         Endpoint.EP0_IN_IDX,
-                                         next_data_chunk,
-                                     );
+                                    f.usb_start_tx(Endpoint.EP0_IN_IDX, next_data_chunk);
                                 } else {
-                                    f.usb_start_rx(
-                                        Endpoint.EP0_OUT_IDX,
-                                        0,
-                                    );
+                                    f.usb_start_rx(Endpoint.EP0_OUT_IDX, 0);
 
                                     if (S.driver) |driver| {
                                         _ = driver.class_control(.Ack, &S.setup_packet);
@@ -456,9 +441,24 @@ pub fn Usb(comptime f: anytype) type {
                             }
                         },
                         else => {
-                            if (debug) std.log.info("    ELSE, ep_addr: {}", .{
-                                epb.endpoint_address & 0x7f,
-                            });
+                            const ep_dir = Endpoint.dir_from_address(epb.endpoint_address);
+                            const ep_num = Endpoint.num_from_address(epb.endpoint_address);
+
+                            if (ep_dir == .Out and ep_num == 2) {
+                                // Handle data received on endpoint 2 OUT
+                                const received_data = epb.buffer;
+                                const copy_len = received_data.len;
+                                std.log.debug("Buffer Lengths {any}: {any}", .{ received_data.len, data_buffer.len });
+                                //std.mem.copy(u8, data_buffer[0..copy_len], received_data[0..copy_len]);
+                                std.mem.copyForwards(u8, data_buffer[0..copy_len], received_data[0..copy_len]);
+                                bytes_received = copy_len;
+                                std.log.debug("Received data on endpoint {d}: {s}", .{ epb.endpoint_address, received_data });
+                            }
+
+                            // Process the data here (e.g., pass to your application)
+
+                            // Prepare the endpoint for the next reception
+                            f.usb_start_rx(epb.endpoint_address, 64);
                         },
                     }
                 }
@@ -475,14 +475,18 @@ pub fn Usb(comptime f: anytype) type {
                 S.new_address = null;
                 S.configured = false;
                 S.started = false;
-                S.buffer_reader = BufferReader { .buffer = &.{} };
+                S.buffer_reader = BufferReader{ .buffer = &.{} };
             }
 
             // If we have been configured but haven't reached this point yet, set up
             // our custom EP OUT's to receive whatever data the host wants to send.
             if (S.configured and !S.started) {
                 S.started = true;
+                // Start receiving data on the CDC data OUT endpoint (endpoint 2 OUT)
+                const ep_addr = Endpoint.to_address(2, .Out);
+                f.usb_start_rx(ep_addr, 64);
             }
+            return bytes_received;
         }
     };
 }
@@ -491,13 +495,7 @@ pub fn Usb(comptime f: anytype) type {
 // Driver support stuctures
 // +++++++++++++++++++++++++++++++++++++++++++++++++
 
-pub const DeviceConfiguration = struct {
-    device_descriptor: *const types.DeviceDescriptor,
-    config_descriptor: []const u8,
-    lang_descriptor: []const u8,
-    descriptor_strings: []const []const u8,
-    drivers: []types.UsbClassDriver
-};
+pub const DeviceConfiguration = struct { device_descriptor: *const types.DeviceDescriptor, config_descriptor: []const u8, lang_descriptor: []const u8, descriptor_strings: []const []const u8, drivers: []types.UsbClassDriver };
 
 /// Buffer pointers, once they're prepared and initialized.
 pub const Buffers = struct {
@@ -569,7 +567,7 @@ const BufferWriter = struct {
     pos: usize = 0,
     endian: std.builtin.Endian = builtin.cpu.arch.endian(),
 
-    pub const Error = error{ EndOfBuffer };
+    pub const Error = error{EndOfBuffer};
 
     /// Moves forward write cursor by the provided number of bytes.
     pub fn advance(self: *@This(), bytes: usize) Error!void {
@@ -581,7 +579,7 @@ const BufferWriter = struct {
     pub fn write(self: *@This(), data: []const u8) Error!void {
         try self.bound_check(data.len);
         defer self.advance_unsafe(data.len);
-        @memcpy(self.buffer[self.pos..self.pos + data.len], data);
+        @memcpy(self.buffer[self.pos .. self.pos + data.len], data);
     }
 
     /// Writes an int with respect to the buffer's endianness and moves write cursor forward by int size.
@@ -632,13 +630,13 @@ const BufferReader = struct {
     pub fn try_read(self: *@This(), bytes: usize) []const u8 {
         const size = @min(bytes, self.buffer.len - self.pos);
         defer self.advance_unsafe(size);
-        return self.buffer[self.pos..self.pos + size];
+        return self.buffer[self.pos .. self.pos + size];
     }
 
     /// Attempts to read the given amount of bytes (or less if close to buffer end) without advancing the read cursor.
     pub fn try_peek(self: *@This(), bytes: usize) []const u8 {
         const size = @min(bytes, self.buffer.len - self.pos);
-        return self.buffer[self.pos..self.pos + size];
+        return self.buffer[self.pos .. self.pos + size];
     }
 
     /// Returns the number of bytes remaining from the current read cursor position to the end of the underlying buffer.

@@ -23,7 +23,8 @@ def capture_image(angle):
     
     # Check if the frame was captured successfully
     if ret:
-        folder = capture_dir_5 if angle == 5 else capture_dir_45
+        folder = f'captures/angle_{angle}'
+        os.makedirs(folder, exist_ok=True)
         file_count = len(os.listdir(folder))
         file_name = f'{folder}/capture_{file_count + 1}.jpg'
         
@@ -47,7 +48,6 @@ def open_serial_port(port, baudrate):
             print("Retrying in 2 seconds...")
             time.sleep(2)
 
-# Function to listen to the serial port and handle incoming messages
 def listen_to_serial(ser):
     try:
         while True:
@@ -55,11 +55,13 @@ def listen_to_serial(ser):
                 data = ser.readline().decode('utf-8').rstrip()
                 print(f"Received: {data}")
                 
-                # Check for specific angle messages
-                if data == "Angle: 70":
-                    capture_image(70)
-                elif data == "Angle: 48":
-                    capture_image(48)
+                # Check if the message contains "Angle: " and extract the angle value
+                if data.startswith("Angle: "):
+                    try:
+                        angle = int(data.split(": ")[1])
+                        capture_image(angle)
+                    except ValueError:
+                        print(f"Invalid angle value received: {data}")
     except serial.SerialException as e:
         print(f"Serial connection lost: {e}")
         ser.close()
