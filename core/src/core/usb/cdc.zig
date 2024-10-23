@@ -7,10 +7,10 @@ const DescType = types.DescType;
 const bos = utils.BosConfig;
 
 pub const DescSubType = enum(u8) {
-    Header         = 0x00,
+    Header = 0x00,
     CallManagement = 0x01,
-    ACM            = 0x02,
-    Union          = 0x06,
+    ACM = 0x02,
+    Union = 0x06,
 
     pub fn from_u16(v: u16) ?@This() {
         return std.meta.intToEnum(@This(), v) catch null;
@@ -18,19 +18,17 @@ pub const DescSubType = enum(u8) {
 };
 
 pub const CdcManagementRequestType = enum(u8) {
-    SetLineCoding       = 0x20,
-    GetLineCoding       = 0x21,
+    SetLineCoding = 0x20,
+    GetLineCoding = 0x21,
     SetControlLineState = 0x22,
-    SendBreak           = 0x23,
+    SendBreak = 0x23,
 
     pub fn from_u8(v: u8) ?@This() {
         return std.meta.intToEnum(@This(), v) catch null;
     }
 };
 
-pub const CdcCommSubClassType = enum(u8) {
-    AbstractControlModel = 2
-};
+pub const CdcCommSubClassType = enum(u8) { AbstractControlModel = 2 };
 
 pub const CdcHeaderDescriptor = extern struct {
     length: u8 = 5,
@@ -126,8 +124,8 @@ pub const CdcLineCoding = extern struct {
 };
 
 pub const CdcClassDriver = struct {
-    
     device: ?types.UsbDevice = null,
+    rx_data_buffer: [64]u8 = undefined,
     ep_notif: u8 = 0,
     ep_in: u8 = 0,
     ep_out: u8 = 0,
@@ -140,8 +138,8 @@ pub const CdcClassDriver = struct {
         var buf: [64]u8 = undefined;
         const size = @min(data.len, max_size);
         @memcpy(buf[0..size], data[0..size]);
-        buf[max_size-2] = '\r';
-        buf[max_size-1] = '\n';
+        buf[max_size - 2] = '\r';
+        buf[max_size - 1] = '\n';
         const data_packet = buf[0..size];
 
         if (self.device.?.ready() == false) {
@@ -153,12 +151,7 @@ pub const CdcClassDriver = struct {
     fn init(ptr: *anyopaque, device: types.UsbDevice) void {
         var self: *CdcClassDriver = @ptrCast(@alignCast(ptr));
         self.device = device;
-        self.line_coding = .{ 
-            .bit_rate = 115200,
-            .stop_bits = 0,
-            .parity = 0,
-            .data_bits = 8
-        };
+        self.line_coding = .{ .bit_rate = 115200, .stop_bits = 0, .parity = 0, .data_bits = 8 };
     }
 
     fn open(ptr: *anyopaque, cfg: []const u8) !usize {
@@ -189,8 +182,12 @@ pub const CdcClassDriver = struct {
                 for (0..2) |_| {
                     if (bos.try_get_desc_as(types.EndpointDescriptor, curr_cfg)) |desc_ep| {
                         switch (types.Endpoint.dir_from_address(desc_ep.endpoint_address)) {
-                            .In => { self.ep_in = desc_ep.endpoint_address; },
-                            .Out => { self.ep_out = desc_ep.endpoint_address; },
+                            .In => {
+                                self.ep_in = desc_ep.endpoint_address;
+                            },
+                            .Out => {
+                                self.ep_out = desc_ep.endpoint_address;
+                            },
                         }
                         self.device.?.endpoint_open(curr_cfg[0..desc_ep.length]);
                         curr_cfg = bos.get_desc_next(curr_cfg);
@@ -213,7 +210,7 @@ pub const CdcClassDriver = struct {
                             // HACK, we should handle data phase somehow to read sent line_coding
                             self.device.?.control_ack(setup);
                         },
-                        else => {}
+                        else => {},
                     }
                 },
                 .GetLineCoding => {
@@ -226,7 +223,7 @@ pub const CdcClassDriver = struct {
                         .Setup => {
                             self.device.?.control_ack(setup);
                         },
-                        else => {}
+                        else => {},
                     }
                 },
                 .SendBreak => {
@@ -234,9 +231,9 @@ pub const CdcClassDriver = struct {
                         .Setup => {
                             self.device.?.control_ack(setup);
                         },
-                        else => {}
+                        else => {},
                     }
-                }
+                },
             }
         }
 
@@ -244,11 +241,6 @@ pub const CdcClassDriver = struct {
     }
 
     pub fn driver(self: *@This()) types.UsbClassDriver {
-        return .{
-            .ptr = self,
-            .fn_init = init,
-            .fn_open = open,
-            .fn_class_control = class_control
-        };
+        return .{ .ptr = self, .fn_init = init, .fn_open = open, .fn_class_control = class_control };
     }
 };

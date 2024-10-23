@@ -1,18 +1,18 @@
 const std = @import("std");
 
 pub const DescType = enum(u8) {
-    Device               = 0x01,
-    Config               = 0x02,
-    String               = 0x03,
-    Interface            = 0x04,
-    Endpoint             = 0x05,
-    DeviceQualifier      = 0x06,
+    Device = 0x01,
+    Config = 0x02,
+    String = 0x03,
+    Interface = 0x04,
+    Endpoint = 0x05,
+    DeviceQualifier = 0x06,
     InterfaceAssociation = 0x0b,
-    CsDevice             = 0x21,
-    CsConfig             = 0x22,
-    CsString             = 0x23,
-    CsInterface          = 0x24,
-    CsEndpoint           = 0x25,
+    CsDevice = 0x21,
+    CsConfig = 0x22,
+    CsString = 0x23,
+    CsInterface = 0x24,
+    CsEndpoint = 0x25,
 
     pub fn from_u8(v: u8) ?@This() {
         return std.meta.intToEnum(@This(), v) catch null;
@@ -21,18 +21,18 @@ pub const DescType = enum(u8) {
 
 pub const ClassCode = enum(u8) {
     Unspecified = 0,
-    Audio       = 1,
-    Cdc         = 2,
-    Hid         = 3,
-    CdcData     = 10,
+    Audio = 1,
+    Cdc = 2,
+    Hid = 3,
+    CdcData = 10,
 };
 
 /// Types of transfer that can be indicated by the `attributes` field on `EndpointDescriptor`.
 pub const TransferType = enum(u2) {
-    Control     = 0,
+    Control = 0,
     Isochronous = 1,
-    Bulk        = 2,
-    Interrupt   = 3,
+    Bulk = 2,
+    Interrupt = 3,
 
     pub fn from_u8(v: u8) ?@This() {
         return std.meta.intToEnum(@This(), v) catch null;
@@ -43,17 +43,12 @@ pub const TransferType = enum(u2) {
     }
 };
 
-pub const ControlStage = enum {
-    Idle,
-    Setup,
-    Data,
-    Ack
-};
+pub const ControlStage = enum { Idle, Setup, Data, Ack };
 
 /// The types of USB SETUP requests that we understand.
 pub const SetupRequest = enum(u8) {
-    GetDescriptor    = 0x06,
-    SetAddress       = 0x05,
+    GetDescriptor = 0x06,
+    SetAddress = 0x05,
     SetConfiguration = 0x09,
 
     pub fn from_u8(v: u8) ?@This() {
@@ -66,7 +61,7 @@ pub const SetupRequest = enum(u8) {
 /// by a 0 byte, and IN by an `0x80` byte.
 pub const Dir = enum(u1) {
     Out = 0,
-    In  = 1,
+    In = 1,
 
     pub const DIR_IN_MASK = 0x80;
 
@@ -83,7 +78,7 @@ pub const Endpoint = struct {
     pub inline fn to_address(num: u8, dir: Dir) u8 {
         return switch (dir) {
             .Out => num,
-            .In => num | Dir.DIR_IN_MASK
+            .In => num | Dir.DIR_IN_MASK,
         };
     }
 
@@ -98,6 +93,7 @@ pub const Endpoint = struct {
     pub const EP0_OUT_IDX = 0;
     pub const EP0_IN_IDX = 1;
 
+    pub const EP2_OUT_ADDR: u8 = to_address(2, .Out);
     pub const EP0_IN_ADDR: u8 = to_address(0, .In);
     pub const EP0_OUT_ADDR: u8 = to_address(0, .Out);
 };
@@ -107,48 +103,10 @@ pub const RequestType = packed struct(u8) {
     type: Type,
     direction: Dir,
 
-    const Type = enum(u2) {
-        Standard,
-        Class,
-        Vendor,
-        Other
-    };
+    const Type = enum(u2) { Standard, Class, Vendor, Other };
 
     /// RequestType is created from raw bytes using std.mem.bytesToValue, we need to support all potential values if we don't want to crash such conversion
-    const Recipient = enum(u5) {
-        Device,
-        Interface,
-        Endpoint,
-        Other,
-        Reserved1,
-        Reserved2,
-        Reserved3,
-        Reserved4,
-        Reserved5,
-        Reserved6,
-        Reserved7,
-        Reserved8,
-        Reserved9,
-        Reserved10,
-        Reserved11,
-        Reserved12,
-        Reserved13,
-        Reserved14,
-        Reserved15,
-        Reserved16,
-        Reserved17,
-        Reserved18,
-        Reserved19,
-        Reserved20,
-        Reserved21,
-        Reserved22,
-        Reserved23,
-        Reserved24,
-        Reserved25,
-        Reserved26,
-        Reserved27,
-        Reserved28
-    };
+    const Recipient = enum(u5) { Device, Interface, Endpoint, Other, Reserved1, Reserved2, Reserved3, Reserved4, Reserved5, Reserved6, Reserved7, Reserved8, Reserved9, Reserved10, Reserved11, Reserved12, Reserved13, Reserved14, Reserved15, Reserved16, Reserved17, Reserved18, Reserved19, Reserved20, Reserved21, Reserved22, Reserved23, Reserved24, Reserved25, Reserved26, Reserved27, Reserved28 };
 };
 
 /// Layout of an 8-byte USB SETUP packet.
@@ -419,12 +377,7 @@ pub const DeviceQualifierDescriptor = extern struct {
     }
 };
 
-pub const DriverErrors = error {
-    ExpectedInterfaceDescriptor,
-    UnsupportedInterfaceClassType,
-    UnsupportedInterfaceSubClassType,
-    UnexpectedDescriptor
-};
+pub const DriverErrors = error{ ExpectedInterfaceDescriptor, UnsupportedInterfaceClassType, UnsupportedInterfaceSubClassType, UnexpectedDescriptor };
 
 pub const UsbDevice = struct {
     fn_ready: *const fn () bool,

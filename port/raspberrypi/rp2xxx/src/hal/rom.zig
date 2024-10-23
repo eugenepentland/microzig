@@ -212,6 +212,15 @@ pub inline fn connect_internal_flash() *signatures.connect_internal_flash {
     );
 }
 
+pub fn reset_usb_boot(usb_activity_gpio_pin_mask: u32, disable_interface_mask: u32) noreturn {
+    const S = struct {
+        var f: ?*const fn (usb_activity_gpio_pin_mask: u32, disable_interface_mask: u32) noreturn = null;
+    };
+
+    if (S.f == null) S.f = @as(*const fn (usb_activity_gpio_pin_mask: u32, disable_interface_mask: u32) noreturn, @ptrCast(_rom_func_lookup(Code.reset_usb_boot)));
+    S.f.?(usb_activity_gpio_pin_mask, disable_interface_mask);
+}
+
 /// First set up the SSI for serial-mode operations, then issue the fixed XIP exit
 /// sequence described in Section 2.8.1.2. Note that the bootrom code uses the IO
 /// forcing logic to drive the CS pin, which must be cleared before returning the
