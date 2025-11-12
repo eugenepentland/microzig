@@ -317,7 +317,7 @@ pub fn F(comptime config: UsbConfig) type {
             });
 
             // Flip the DATA0/1 PID for the next receive
-            ep.next_pid_1 = !ep.next_pid_1;
+            //ep.next_pid_1 = !ep.next_pid_1;
             ep.awaiting_rx = true;
         }
 
@@ -370,9 +370,17 @@ pub fn F(comptime config: UsbConfig) type {
 
         /// Called on a bus reset interrupt
         pub fn bus_reset() void {
-            // Acknowledge by writing the write-one-to-clear status bit.
             peripherals.USB.SIE_STATUS.modify(.{ .BUS_RESET = 1 });
             peripherals.USB.ADDR_ENDP.modify(.{ .ADDRESS = 0 });
+            // NEW: scrub control/buffer control like you do at cold init
+            for (1..cfg_max_endpoints_count) |i| {
+                rp2xxx_endpoints.get_ep_ctrl(@intCast(i), .In).?.write_raw(0);
+                rp2xxx_endpoints.get_ep_ctrl(@intCast(i), .Out).?.write_raw(0);
+            }
+            for (1..cfg_max_endpoints_count) |i| {
+                rp2xxx_endpoints.get_buf_ctrl(@intCast(i), .In).?.write_raw(0);
+                rp2xxx_endpoints.get_buf_ctrl(@intCast(i), .Out).?.write_raw(0);
+            }
         }
 
         pub fn set_address(addr: u7) void {
@@ -507,6 +515,11 @@ pub fn F(comptime config: UsbConfig) type {
             // Get the actual length of the data, which may be less
             // than the buffer size.
             const len = ep.buffer_control.?.read().LENGTH_0;
+
+            if (dir == usb.types.Dir.Out) {
+                // We actually consumed a packet: now flip for the next one.
+                ep.next_pid_1 = !ep.next_pid_1;
+            }
 
             // Copy the data from SRAM
             return usb.EPB{

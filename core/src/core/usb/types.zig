@@ -13,6 +13,7 @@ pub const DescType = enum(u8) {
     CsString = 0x23,
     CsInterface = 0x24,
     CsEndpoint = 0x25,
+    Bos = 0x0F,
 
     pub fn from_u8(v: u8) ?@This() {
         return std.meta.intToEnum(@This(), v) catch null;

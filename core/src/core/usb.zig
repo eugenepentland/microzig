@@ -1,3 +1,4 @@
+// core/usb.zig
 //! Abstract USB device implementation
 //!
 //! This can be used to setup a USB device.
@@ -211,20 +212,22 @@ pub fn Usb(comptime f: anytype) type {
                                 .SetConfiguration => {
                                     if (S.debug_mode) std.log.info("    SetConfiguration", .{});
                                     const cfg_num = setup.value;
-                                    if (S.cfg_num != cfg_num) {
-                                        if (S.cfg_num > 0) {
-                                            configuration_reset();
-                                        }
 
-                                        if (cfg_num > 0) {
-                                            try process_set_config(cfg_num - 1);
-                                            // TODO: call mount callback if any
-                                        } else {
-                                            // TODO: call umount callback if any
-                                        }
+                                    // Always (re)initialize, even if cfg_num didn't change.
+                                    // This guarantees DATA0 toggle per USB spec, and re-primes EP OUT.
+                                    if (S.cfg_num > 0) {
+                                        configuration_reset(); // clears itf/ep -> driver maps
                                     }
+
+                                    if (cfg_num > 0) {
+                                        try process_set_config(cfg_num - 1); // calls driver.open() -> endpoint_open()
+                                    } else {
+                                        // optional: unmount hook
+                                    }
+
                                     S.cfg_num = cfg_num;
-                                    S.configured = true;
+                                    S.configured = (cfg_num > 0);
+
                                     CmdEndpoint.send_cmd_ack();
                                 },
                                 .GetDescriptor => {
@@ -245,12 +248,31 @@ pub fn Usb(comptime f: anytype) type {
                                 },
                             }
                         },
+                        .Vendor => {
+                            if (usb_config.?.webusb_vendor_code) |vc| {
+                                if (usb_config.?.webusb_landing_page_index) |i_landing| {
+                                    if (usb_config.?.webusb_url_descriptor) |url_desc| {
+                                        if (setup.request == vc and setup.index == 0x0002 and setup.value == i_landing) {
+                                            CmdEndpoint.send_cmd_response(url_desc, setup.length);
+                                            return; // handled
+                                        }
+                                    }
+                                }
+                            }
+                        },
                         else => {},
                     }
                 }
 
                 fn process_get_descriptor(setup: *const types.SetupPacket, descriptor_type: DescType) !void {
                     switch (descriptor_type) {
+                        .Bos => {
+                            if (S.debug_mode) std.log.info("        BOS", .{});
+
+                            var bw = BufferWriter{ .buffer = &S.tmp };
+                            try bw.write(usb_config.?.bos_descriptor);
+                            CmdEndpoint.send_cmd_response(bw.get_written_slice(), setup.length);
+                        },
                         .Device => {
                             if (S.debug_mode) std.log.info("        Device", .{});
 
@@ -488,7 +510,19 @@ pub fn Usb(comptime f: anytype) type {
                     }
                 }
             } // <-- END of buf status handling
-
+            if (ints.DevConnDis) {
+                if (debug) std.log.info("dev conn/dis", .{});
+                configuration_reset();
+                // Clear device controller + address + EP0 toggles
+                f.bus_reset(); // your rp2xxx impl already clears SIE bits and ADDRESS
+                // Reset our stack-side state
+                S.new_address = null;
+                S.configured = false;
+                S.started = false;
+                S.buffer_reader = BufferReader{ .buffer = &.{} };
+                // (Optional) Explicitly drop any class-driver priming state if you expose a hook
+                // for (usb_config.?.drivers) |*drv| if (drv.reset) drv.reset();
+            }
             // Has the host signaled a bus reset?
             if (ints.BusReset) {
                 if (debug) std.log.info("bus reset", .{});
@@ -523,8 +557,15 @@ pub const DeviceConfiguration = struct {
     lang_descriptor: []const u8,
     descriptor_strings: []const []const u8,
     drivers: []types.UsbClassDriver,
-};
+    bos_descriptor: []const u8,
 
+    // NEW (optional helpers)
+    webusb_vendor_code: ?u8 = null, // e.g. 0x30
+    webusb_landing_page_index: ?u8 = null, // e.g. 1
+    webusb_url_descriptor: ?[]const u8 = null, // your URL desc bytes
+
+    ms_os_string_descriptor_0xEE: ?[]const u8 = null, // if you use MS OS string (index 0xEE)
+};
 /// USB interrupt status
 ///
 /// __Note__: Available interrupts may change from device to device.
