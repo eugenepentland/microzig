@@ -369,18 +369,39 @@ pub fn F(comptime config: UsbConfig) type {
         }
 
         /// Called on a bus reset interrupt
+        // In rp2xxx/usb.zig
+
         pub fn bus_reset() void {
             peripherals.USB.SIE_STATUS.modify(.{ .BUS_RESET = 1 });
             peripherals.USB.ADDR_ENDP.modify(.{ .ADDRESS = 0 });
-            // NEW: scrub control/buffer control like you do at cold init
+
+            // --- Hardware State Reset ---
+            peripherals.USB_DPRAM.SETUP_PACKET_LOW.write_raw(0);
+            peripherals.USB_DPRAM.SETUP_PACKET_HIGH.write_raw(0);
+
             for (1..cfg_max_endpoints_count) |i| {
                 rp2xxx_endpoints.get_ep_ctrl(@intCast(i), .In).?.write_raw(0);
                 rp2xxx_endpoints.get_ep_ctrl(@intCast(i), .Out).?.write_raw(0);
             }
-            for (1..cfg_max_endpoints_count) |i| {
+
+            // This is the hardware fix you already applied
+            for (0..cfg_max_endpoints_count) |i| {
                 rp2xxx_endpoints.get_buf_ctrl(@intCast(i), .In).?.write_raw(0);
                 rp2xxx_endpoints.get_buf_ctrl(@intCast(i), .Out).?.write_raw(0);
             }
+
+            // --- ‼️ This is the part you probably missed ‼️ ---
+            // --- Software State Reset (Fixes the "18 times" leak) ---
+
+            // 1. Reset the DPRAM data buffer allocator
+            data_buffer = rp2xxx_buffers.data_buffer;
+
+            // 2. Reset software endpoint state
+            @memset(std.mem.asBytes(&endpoints), 0);
+
+            // 3. Re-configure EP0 (which was just memset)
+            endpoint_open(Endpoint.EP0_IN_ADDR, 64, types.TransferType.Control);
+            endpoint_open(Endpoint.EP0_OUT_ADDR, 64, types.TransferType.Control);
         }
 
         pub fn set_address(addr: u7) void {
@@ -402,12 +423,25 @@ pub fn F(comptime config: UsbConfig) type {
             const ep_num = Endpoint.num_from_address(ep_addr);
             const ep = hardware_endpoint_get_by_address(ep_addr);
 
+            // If we've already allocated DPRAM for this endpoint once,
+            // just re-init and re-enable it. Don't allocate again.
+            if (ep.configured) {
+                endpoint_init(ep_addr, max_packet_size, transfer_type);
+                if (ep_num != 0) {
+                    endpoint_enable(ep);
+                }
+                return;
+            }
+
+            // First time this endpoint is opened: allocate DPRAM.
             endpoint_init(ep_addr, max_packet_size, transfer_type);
 
             if (ep_num != 0) {
                 endpoint_alloc(ep) catch {};
                 endpoint_enable(ep);
             }
+
+            ep.configured = true;
         }
 
         fn endpoint_init(ep_addr: u8, max_packet_size: u11, transfer_type: types.TransferType) void {
